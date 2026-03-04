@@ -64,33 +64,50 @@ greek_table <- expand.grid(Position = port_table$Position,
     Maturity = as.numeric(gsub("M", "", Maturity))/12,
     Price = RTL::GBSOption(Spot,Strike,Maturity,rf,0, Vol, 
                            ifelse(Type == "Call", "call", "put"))$price) %>% 
-  ungroup() %>% 
   dplyr::group_by(Position) %>% 
   dplyr::mutate(Delta = (lead(Price)-lag(Price))/2*spot_step,
-                Delta_Dol = Delta*Contracts)
-
-
-
-
-
-
-
-
-
-
-  #dplyr::filter(Spot %in% seq(from = 50, to = 100, by = 1))
-
+                Delta_Dol = Delta*Contracts,
+                Gamma = (lead(Price) - 2*Price + lag(Price))/spot_step^2,
+                Gamma_Dol = Gamma*Contracts) %>% 
+  dplyr::filter(Spot %in% seq(from = 50, to = 100, by = 1))
 
 
 ```
 
+```{r}
+
+vol_step <- 0.01
+
+vega_table <- expand.grid(Position = port_table$Position, 
+                          i_vol = seq(from = 0.01, to = 1.00, by = vol_step)) %>% 
+  dplyr::left_join(select(port_table, -Vol), by = join_by(Position)) %>% 
+  dplyr::arrange(Position, i_vol) %>% 
+  rowwise() %>% 
+  dplyr::mutate(
+    Spot = Fo,
+    Maturity = as.numeric(gsub("M", "", Maturity))/12,
+    Price = round(RTL::GBSOption(Spot, Strike, Maturity, 
+                                 rf, 
+                                 0, 
+                                 i_vol, 
+                                 ifelse(Type == "Call", "call", "put"))$price, digits = 4)) %>% 
+  dplyr::group_by(Position) %>% 
+  dplyr::mutate(Vega = (lead(Price)-lag(Price))/2*spot_step,
+                Vega_Dol = Vega*Contracts) %>% 
+  dplyr::filter(i_vol %in% seq(from = 0.01, to = 0.99, by = 0.01))
+
+
+```
 
 ```{r}
-delta_p1 <- round(greek_table$Delta[which(greek_table$Position == "P1" & greek_table$Spot == Fo)], digits = 4)
+delta_p1 <- round(greek_table$Delta[which(greek_table$Position == "P1" &
+                                            greek_table$Spot == Fo)], digits = 4)
 
-delta_p2 <- round(greek_table$Delta[which(greek_table$Position == "P2" & greek_table$Spot == Fo)], digits = 4)
+delta_p2 <- round(greek_table$Delta[which(greek_table$Position == "P2" &
+                                            greek_table$Spot == Fo)], digits = 4)
 
-delta_p3 <- round(greek_table$Delta[which(greek_table$Position == "P3" & greek_table$Spot == Fo)], digits = 4)
+delta_p3 <- round(greek_table$Delta[which(greek_table$Position == "P3" &
+                                            greek_table$Spot == Fo)], digits = 4)
 
 tibble::tibble(P1 = delta_p1,
                P2 = delta_p2,
@@ -105,10 +122,6 @@ tibble::tibble(P1 = delta_p1,
 
 
 ```
-
-
-
-
 
 ```{r}
 
@@ -126,11 +139,65 @@ greek_table %>%
 
 ```
 
+```{r}
+
+#p1_vol <- port_table$Vol[which(port_table$Position == "P1")]
+
+p1_vol <- port_table %>% 
+  filter(Position == "P1") %>% 
+  pull(Vol)
 
 
+p2_vol <- port_table$Vol[which(port_table$Position == "P2")]
+
+p3_vol <- port_table$Vol[which(port_table$Position == "P3")]
+
+vega_p1 <- round(vega_table$Vega[
+  which(vega_table$Position == "P1" &
+  vega_table$i_vol <= p1_vol+0.0001 &
+  vega_table$i_vol >= p1_vol-0.0001)], digits = 4)
 
 
+vega_p2 <- round(vega_table$Vega[
+  which(vega_table$Position == "P2" &
+        vega_table$i_vol <= p2_vol+0.0001 &
+        vega_table$i_vol >= p2_vol-0.0001)], digits = 4)
 
+vega_p3 <- round(vega_table$Vega[
+  which(vega_table$Position == "P3" &
+          vega_table$i_vol <= p3_vol+0.0001 &
+          vega_table$i_vol >= p3_vol-0.0001)], digits = 4)
+
+
+```
+
+```{r}
+
+tibble::tibble(P1 = vega_p1,
+               P2 = vega_p2,
+               P3 = vega_p3) %>% 
+  gt() %>% 
+  tab_header(title = "Position Vegas") %>% 
+  cols_align(align = "center") %>% 
+  tab_options(column_labels.background.color = "lightgrey",
+              heading.background.color = "navy",
+              column_labels.font.weight = "bold")
+
+```
+
+```{r}
+
+vega_table %>%
+  dplyr::filter(is.na(Vega) == FALSE) %>% 
+  ggplot2::ggplot(aes(x = i_vol, y = Vega, color = Position))+
+  geom_line(linewidth = .8)+
+  facet_grid(Position~.,
+             scales = "free_y")+
+  labs(x = "Implied Volatility")+
+  theme_bw()+
+  theme(element_rect(colour = "white"))
+
+```
 
 ```{r}
 
