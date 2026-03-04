@@ -25,11 +25,12 @@ library(data.table)
 
 Fo <- 73
 rf <- 0.04
+Maturity = 3/12
 
 port_table <- tibble::tibble(Position = c("P1", "P2", "P3"),
                              Type = c("Put", "Put", "Call"),
                              Strike = c(70, 55, 80),
-                             Maturity = c("3M", "3M", "3M"),
+                             Maturity,
                              Vol = c(0.35, 0.42, 0.3),
                              Contracts = c(+2000, -2000, -2000))
 
@@ -196,6 +197,86 @@ vega_table %>%
   labs(x = "Implied Volatility")+
   theme_bw()+
   theme(element_rect(colour = "white"))
+
+```
+
+```{r}
+
+time_step <- 1/365
+
+theta_table <-expand.grid(Position = port_table$Position,
+                          TTM = seq(from = 0, to = 2.5, by = 1/365)) %>% 
+                dplyr::left_join(port_table) %>%
+                dplyr::arrange(Position, TTM) %>%
+                rowwise() %>% 
+                dplyr::mutate(Price = RTL::GBSOption(Fo,
+                                                     Strike,
+                                                     TTM,
+                                                     rf,
+                                                     0,
+                                                     Vol)$price,
+                              Diff = abs(Maturity - TTM)) %>% 
+                ungroup() %>%
+                dplyr::group_by(Position) %>% 
+                dplyr::mutate(Theta = (lead(Price) - lag(Price))/2*time_step,
+                              Theta_Dol = Theta*Contracts)
+              
+
+
+```
+
+```{r}
+
+p1_ttm <- port_table %>% 
+  dplyr::mutate(Maturity = as.numeric(gsub("M", "", Maturity))/12) %>% 
+  dplyr::filter(Position == "P1") %>% 
+  pull(Maturity)
+
+
+
+theta_p1 <- theta_table$Theta[
+  which(theta_table$Position == "P1" & 
+          theta_table$Diff ==min(theta_table$Diff, na.rm = TRUE)
+        )]
+
+theta_p2 <- theta_table$Theta[
+  which(theta_table$Position == "P2" & 
+          theta_table$Diff ==min(theta_table$Diff, na.rm = TRUE)
+        )]
+
+theta_p3 <- 
+  theta_table$Theta[
+  which(theta_table$Position == "P3" & 
+          theta_table$Diff ==min(theta_table$Diff, na.rm = TRUE)
+        )]
+```
+
+```{r}
+
+tibble::tibble(P1 = theta_p1,
+               P2 = theta_p2,
+               P3 = theta_p3) %>% 
+  gt() %>% 
+  tab_header(title = "Position Thetas") %>% 
+  cols_align(align = "center") %>% 
+  tab_options(column_labels.background.color = "lightgrey",
+              heading.background.color = "navy",
+              column_labels.font.weight = "bold")
+
+
+```
+
+```{r}
+
+theta_table %>% 
+  dplyr::filter(is.na(Theta) == FALSE) %>% 
+  ggplot2::ggplot(aes(x = TTM, y = Theta, colour = Position ))+
+  geom_line(linewidth = .8)+
+  facet_grid(Position~.,
+             scales = "free_y")+
+  theme_bw()+
+  theme(element_rect(colour = "white"))
+
 
 ```
 
