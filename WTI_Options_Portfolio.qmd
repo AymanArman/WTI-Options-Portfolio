@@ -7,3 +7,141 @@ editor: visual
 ---
 
 # **WTI Options Portfolio: Full Greek P&L Attribution**
+
+```{r, include = FALSE}
+
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE)
+
+library(tidyverse)
+library(quantmod)
+library(gt)
+library(RTL)
+library(data.table)
+```
+
+```{r}
+
+Fo <- 73
+rf <- 0.04
+
+port_table <- tibble::tibble(Position = c("P1", "P2", "P3"),
+                             Type = c("Put", "Put", "Call"),
+                             Strike = c(70, 55, 80),
+                             Maturity = c("3M", "3M", "3M"),
+                             Vol = c(0.35, 0.42, 0.3),
+                             Contracts = c(+2000, -2000, -2000))
+
+price_table <- tibble::tibble(price = seq(from = 50, to = 100, by = 1))
+
+
+
+port_table %>% gt() %>% 
+  tab_header(title = "WTI Options Portfolio")
+
+```
+
+### Question 1:
+
+```{r}
+
+spot_step <- 1
+
+s_down <- Fo - spot_step
+s_up <- Fo + spot_step
+
+```
+
+```{r}
+
+greek_table <- expand.grid(Position = port_table$Position, 
+                           Spot = seq(from = 48, to = 102, by = spot_step)) %>% 
+  dplyr::left_join(port_table, by = join_by(Position)) %>% 
+  dplyr::arrange(Position, Spot) %>% 
+  rowwise() %>% 
+  dplyr::mutate(
+    Maturity = as.numeric(gsub("M", "", Maturity))/12,
+    Price = RTL::GBSOption(Spot,Strike,Maturity,rf,0, Vol, 
+                           ifelse(Type == "Call", "call", "put"))$price) %>% 
+  ungroup() %>% 
+  dplyr::group_by(Position) %>% 
+  dplyr::mutate(Delta = (lead(Price)-lag(Price))/2*spot_step,
+                Delta_Dol = Delta*Contracts)
+
+
+
+
+
+
+
+
+
+
+  #dplyr::filter(Spot %in% seq(from = 50, to = 100, by = 1))
+
+
+
+```
+
+
+```{r}
+delta_p1 <- round(greek_table$Delta[which(greek_table$Position == "P1" & greek_table$Spot == Fo)], digits = 4)
+
+delta_p2 <- round(greek_table$Delta[which(greek_table$Position == "P2" & greek_table$Spot == Fo)], digits = 4)
+
+delta_p3 <- round(greek_table$Delta[which(greek_table$Position == "P3" & greek_table$Spot == Fo)], digits = 4)
+
+tibble::tibble(P1 = delta_p1,
+               P2 = delta_p2,
+               P3 = delta_p3) %>% 
+  gt() %>% 
+  tab_header(title = "Position Deltas") %>% 
+  cols_align(align = "center") %>% 
+  tab_options(column_labels.background.color = "lightgrey",
+              heading.background.color = "navy",
+              column_labels.font.weight = "bold")
+
+
+
+```
+
+
+
+
+
+```{r}
+
+greek_table %>%  
+  ggplot2::ggplot(aes(x = Spot, y = Delta, color = Position))+
+  geom_line(linewidth = .8)+
+  facet_grid(Position~.,
+             scales = "free_y")+
+  theme_bw()+
+  theme(
+    element_rect(colour = "white"))
+
+
+
+
+```
+
+
+
+
+
+
+
+```{r}
+
+#Expanding the plot so I can evaluate greeks across different prices.
+df <- expand.grid(Position = port_table$Position, Price = price_table$price) %>% 
+  dplyr::left_join(port_table, by = join_by(Position)) %>% 
+  dplyr::mutate(Spot = Fo,
+                Rate = rf)
+
+
+
+
+
+```
