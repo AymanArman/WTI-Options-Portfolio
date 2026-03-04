@@ -1,0 +1,9 @@
+---
+title: "WTI Options Portfolio"
+format: 
+  html:
+    embed-resources: true
+editor: visual
+---
+
+# **WTI Options Portfolio: Full Greek P&L Attribution**
