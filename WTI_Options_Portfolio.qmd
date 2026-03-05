@@ -454,7 +454,7 @@ time_jump <- 1/365
 
 Attributed_PnL <- portfolio_greeks %>% 
   dplyr::mutate(Delta_Att = (Delta_Dol_P1 + Delta_Dol_P2 + Delta_Dol_P3)*spot_ch,
-                Gamma_Att = (Gamma_Dol_P1 + Gamma_Dol_P2 + Gamma_Dol_P3)*spot_ch,
+                Gamma_Att = (Gamma_Dol_P1 + Gamma_Dol_P2 + Gamma_Dol_P3)*spot_ch^2,
                 Vega_Att = (Vega_Dol_P1 + Vega_Dol_P2 + Vega_Dol_P3)*iv_jump,
                 Theta_Att = (Theta_Dol_P2 + Theta_Dol_P2 + Theta_Dol_P3)*time_jump,
                 PnL = Delta_Att + Gamma_Att + Vega_Att + Theta_Att) %>% 
