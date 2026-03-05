@@ -19,6 +19,7 @@ library(quantmod)
 library(gt)
 library(RTL)
 library(data.table)
+library(viridis)
 ```
 
 ```{r}
@@ -43,7 +44,7 @@ port_table %>% gt() %>%
 
 ```
 
-### Question 1:
+### Q1
 
 ```{r}
 
@@ -62,16 +63,98 @@ greek_table <- expand.grid(Position = port_table$Position,
   dplyr::arrange(Position, Spot) %>% 
   rowwise() %>% 
   dplyr::mutate(
-    Maturity = as.numeric(gsub("M", "", Maturity))/12,
+    Maturity = 3/12,
     Price = RTL::GBSOption(Spot,Strike,Maturity,rf,0, Vol, 
-                           ifelse(Type == "Call", "call", "put"))$price) %>% 
+                           ifelse(Type == "Call", "call", "put"))$price,
+    Pos_Price = Price*Contracts*1000) %>% 
   dplyr::group_by(Position) %>% 
   dplyr::mutate(Delta = (lead(Price)-lag(Price))/2*spot_step,
-                Delta_Dol = Delta*Contracts,
+                Delta_Dol = Delta*Contracts*1000,
                 Gamma = (lead(Price) - 2*Price + lag(Price))/spot_step^2,
-                Gamma_Dol = Gamma*Contracts) %>% 
+                Gamma_Dol = Gamma*Contracts*1000) %>% 
   dplyr::filter(Spot %in% seq(from = 50, to = 100, by = 1))
 
+
+```
+
+```{r}
+delta_p1 <- greek_table$Delta[which(greek_table$Position == "P1" &
+                                            greek_table$Spot == Fo)]
+
+delta_p2 <- greek_table$Delta[which(greek_table$Position == "P2" &
+                                            greek_table$Spot == Fo)]
+
+delta_p3 <- greek_table$Delta[which(greek_table$Position == "P3" &
+                                            greek_table$Spot == Fo)]
+
+gamma_p1 <- greek_table$Gamma[which(greek_table$Position == "P1" &
+                                            greek_table$Spot == Fo)]
+
+gamma_p2 <- greek_table$Gamma[which(greek_table$Position == "P2" &
+                                            greek_table$Spot == Fo)]
+
+gamma_p3 <- greek_table$Gamma[which(greek_table$Position == "P3" &
+                                            greek_table$Spot == Fo)]
+```
+
+```{R}
+
+delta_summary <- tibble::tibble(Position = c("P1", "P2", "P3"),
+                               Delta = c(delta_p1, delta_p2, delta_p3))
+                  
+delta_summary %>% 
+  gt() %>% 
+    tab_header(title = "Position Deltas") %>% 
+    cols_align(align = "center") %>% 
+    tab_options(column_labels.background.color = "lightgrey",
+                heading.background.color = "navy",
+                column_labels.font.weight = "bold")
+
+```
+
+```{r}
+
+greek_table %>%  
+  ggplot2::ggplot(aes(x = Spot, y = Delta_Dol, color = Position))+
+  geom_line(linewidth = .8)+
+  facet_grid(Position~.,
+             scales = "free_y")+
+  theme_bw()+
+  theme(
+    element_rect(colour = "white"))+
+  labs(y = "$ Delta")
+
+
+
+
+```
+
+```{r}
+gamma_summary <- tibble::tibble(Position = c("P1", "P2", "P3"),
+                               Gamma = c(gamma_p1, gamma_p2, gamma_p3))
+
+
+gamma_summary %>% 
+  gt() %>% 
+    tab_header(title = "Position Gammas") %>% 
+    cols_align(align = "center") %>% 
+    tab_options(column_labels.background.color = "lightgrey",
+                heading.background.color = "navy",
+                column_labels.font.weight = "bold")
+
+```
+
+```{r}
+
+greek_table %>%  
+  ggplot2::ggplot(aes(x = Spot, y = Gamma_Dol, color = Position))+
+  geom_line(linewidth = .8)+
+  facet_grid(Position~.,
+             scales = "free_y")+
+  theme_bw()+
+  theme(
+    element_rect(colour = "white"))+
+  labs(y = "$ Gamma")
 
 ```
 
@@ -79,62 +162,26 @@ greek_table <- expand.grid(Position = port_table$Position,
 
 vol_step <- 0.01
 
-vega_table <- expand.grid(Position = port_table$Position, 
-                          i_vol = seq(from = 0.01, to = 1.00, by = vol_step)) %>% 
+vega_table <- expand.grid(Position = port_table$Position,
+                          Spot = seq(from = 50, to = 100, by = 1),
+                          i_vol = round(seq(from = 0.01, to = 1.00, by = vol_step),digits = 2)
+                          ) %>% 
   dplyr::left_join(select(port_table, -Vol), by = join_by(Position)) %>% 
-  dplyr::arrange(Position, i_vol) %>% 
+  dplyr::arrange(Position, i_vol, Spot) %>% 
   rowwise() %>% 
   dplyr::mutate(
-    Spot = Fo,
-    Maturity = as.numeric(gsub("M", "", Maturity))/12,
-    Price = round(RTL::GBSOption(Spot, Strike, Maturity, 
-                                 rf, 
-                                 0, 
-                                 i_vol, 
-                                 ifelse(Type == "Call", "call", "put"))$price, digits = 4)) %>% 
+    Price = RTL::GBSOption(Spot, 
+                           Strike, 
+                           Maturity, 
+                           rf, 
+                           0, 
+                           i_vol, 
+                           ifelse(Type == "Call", "call", "put"))$price) %>% 
   dplyr::group_by(Position) %>% 
-  dplyr::mutate(Vega = (lead(Price)-lag(Price))/2*spot_step,
-                Vega_Dol = Vega*Contracts) %>% 
-  dplyr::filter(i_vol %in% seq(from = 0.01, to = 0.99, by = 0.01))
-
-
-```
-
-```{r}
-delta_p1 <- round(greek_table$Delta[which(greek_table$Position == "P1" &
-                                            greek_table$Spot == Fo)], digits = 4)
-
-delta_p2 <- round(greek_table$Delta[which(greek_table$Position == "P2" &
-                                            greek_table$Spot == Fo)], digits = 4)
-
-delta_p3 <- round(greek_table$Delta[which(greek_table$Position == "P3" &
-                                            greek_table$Spot == Fo)], digits = 4)
-
-tibble::tibble(P1 = delta_p1,
-               P2 = delta_p2,
-               P3 = delta_p3) %>% 
-  gt() %>% 
-  tab_header(title = "Position Deltas") %>% 
-  cols_align(align = "center") %>% 
-  tab_options(column_labels.background.color = "lightgrey",
-              heading.background.color = "navy",
-              column_labels.font.weight = "bold")
-
-
-
-```
-
-```{r}
-
-greek_table %>%  
-  ggplot2::ggplot(aes(x = Spot, y = Delta, color = Position))+
-  geom_line(linewidth = .8)+
-  facet_grid(Position~.,
-             scales = "free_y")+
-  theme_bw()+
-  theme(
-    element_rect(colour = "white"))
-
+  dplyr::mutate(Vega = ((lead(Price)-lag(Price))/2*spot_step)/100,
+                 Vega_Dol = Vega*Contracts) %>%
+  drop_na() %>% 
+  ungroup()
 
 
 
@@ -153,50 +200,67 @@ p2_vol <- port_table$Vol[which(port_table$Position == "P2")]
 
 p3_vol <- port_table$Vol[which(port_table$Position == "P3")]
 
-vega_p1 <- round(vega_table$Vega[
-  which(vega_table$Position == "P1" &
-  vega_table$i_vol <= p1_vol+0.0001 &
-  vega_table$i_vol >= p1_vol-0.0001)], digits = 4)
+vega_p1 <- vega_table$Vega[
+  which(
+    vega_table$Position == "P1" &
+    vega_table$i_vol <= p1_vol+0.001 &
+    vega_table$i_vol >= p1_vol-0.001 &
+    vega_table$Spot == Fo)]
 
 
-vega_p2 <- round(vega_table$Vega[
-  which(vega_table$Position == "P2" &
-        vega_table$i_vol <= p2_vol+0.0001 &
-        vega_table$i_vol >= p2_vol-0.0001)], digits = 4)
+vega_p2 <- vega_table$Vega[
+  which(
+    vega_table$Position == "P2" &
+    vega_table$i_vol <= p2_vol+0.001 &
+    vega_table$i_vol >= p2_vol-0.001 &
+    vega_table$Spot == Fo)]
 
-vega_p3 <- round(vega_table$Vega[
-  which(vega_table$Position == "P3" &
-          vega_table$i_vol <= p3_vol+0.0001 &
-          vega_table$i_vol >= p3_vol-0.0001)], digits = 4)
+vega_p3 <- vega_table$Vega[
+  which(
+    vega_table$Position == "P3" &
+    vega_table$i_vol <= p3_vol+0.001 &
+    vega_table$i_vol >= p3_vol-0.001 &
+      vega_table$Spot == Fo)]
+
+
+
+
+
 
 
 ```
 
 ```{r}
 
-tibble::tibble(P1 = vega_p1,
-               P2 = vega_p2,
-               P3 = vega_p3) %>% 
+vega_summary <- tibble::tibble(Position = c("P1", "P2", "P3"),
+                               Vega = c(vega_p1, vega_p2, vega_p3)) 
+                  
+
+vega_summary %>% 
   gt() %>% 
-  tab_header(title = "Position Vegas") %>% 
-  cols_align(align = "center") %>% 
-  tab_options(column_labels.background.color = "lightgrey",
-              heading.background.color = "navy",
-              column_labels.font.weight = "bold")
+    tab_header(title = "Position Vegas") %>% 
+    cols_align(align = "center") %>% 
+    tab_options(column_labels.background.color = "lightgrey",
+                heading.background.color = "navy",
+                column_labels.font.weight = "bold")
 
 ```
 
 ```{r}
 
 vega_table %>%
+  dplyr::filter(Spot %in% c(51:99)) %>% 
+  dplyr::slice_head(n = -2) %>% 
   dplyr::filter(is.na(Vega) == FALSE) %>% 
-  ggplot2::ggplot(aes(x = i_vol, y = Vega, color = Position))+
-  geom_line(linewidth = .8)+
+  ggplot2::ggplot(aes(x = Spot, y = Vega))+
+  geom_point(size = .8,
+             aes(colour = i_vol))+
   facet_grid(Position~.,
              scales = "free_y")+
-  labs(x = "Implied Volatility")+
+  labs(x = "Spot")+
   theme_bw()+
-  theme(element_rect(colour = "white"))
+  theme(element_rect(colour = "white"))+
+  viridis::scale_colour_viridis(option = "turbo")
 
 ```
 
@@ -205,11 +269,12 @@ vega_table %>%
 time_step <- 1/365
 
 theta_table <-expand.grid(Position = port_table$Position,
-                          TTM = seq(from = 0, to = 2.5, by = 1/365)) %>% 
+                          Spot = seq(from = 49, to = 101, by = 1),
+                          TTM = round(seq(from = 0, to = 2, by = 1/12),digits = 4)) %>% 
                 dplyr::left_join(port_table) %>%
-                dplyr::arrange(Position, TTM) %>%
+                dplyr::arrange(Position, TTM, Spot) %>%
                 rowwise() %>% 
-                dplyr::mutate(Price = RTL::GBSOption(Fo,
+                dplyr::mutate(Price = RTL::GBSOption(Spot,
                                                      Strike,
                                                      TTM,
                                                      rf,
@@ -217,9 +282,12 @@ theta_table <-expand.grid(Position = port_table$Position,
                                                      Vol)$price,
                               Diff = abs(Maturity - TTM)) %>% 
                 ungroup() %>%
-                dplyr::group_by(Position) %>% 
+                dplyr::mutate(Price = ifelse(is.nan(Price), 0, Price)) %>% 
+                dplyr::group_by(Position, TTM) %>% 
                 dplyr::mutate(Theta = (lead(Price) - lag(Price))/2*time_step,
-                              Theta_Dol = Theta*Contracts)
+                              Theta_Dol = Theta*Contracts) %>% 
+  drop_na() %>% 
+  ungroup()
               
 
 
@@ -227,35 +295,33 @@ theta_table <-expand.grid(Position = port_table$Position,
 
 ```{r}
 
-p1_ttm <- port_table %>% 
-  dplyr::mutate(Maturity = as.numeric(gsub("M", "", Maturity))/12) %>% 
-  dplyr::filter(Position == "P1") %>% 
-  pull(Maturity)
-
-
-
 theta_p1 <- theta_table$Theta[
   which(theta_table$Position == "P1" & 
-          theta_table$Diff ==min(theta_table$Diff, na.rm = TRUE)
+          theta_table$Diff ==min(theta_table$Diff, na.rm = TRUE) &
+          theta_table$Spot == Fo
         )]
 
 theta_p2 <- theta_table$Theta[
   which(theta_table$Position == "P2" & 
-          theta_table$Diff ==min(theta_table$Diff, na.rm = TRUE)
+          theta_table$Diff ==min(theta_table$Diff, na.rm = TRUE) &
+          theta_table$Spot == Fo
         )]
 
 theta_p3 <- 
   theta_table$Theta[
   which(theta_table$Position == "P3" & 
-          theta_table$Diff ==min(theta_table$Diff, na.rm = TRUE)
+          theta_table$Diff ==min(theta_table$Diff, na.rm = TRUE) &
+          theta_table$Spot == Fo
         )]
 ```
 
 ```{r}
 
-tibble::tibble(P1 = theta_p1,
-               P2 = theta_p2,
-               P3 = theta_p3) %>% 
+theta_summary <- tibble::tibble(Position = c("P1", "P2", "P3"),
+                               Theta = c(theta_p1, theta_p2, theta_p3))
+
+
+theta_summary %>% 
   gt() %>% 
   tab_header(title = "Position Thetas") %>% 
   cols_align(align = "center") %>% 
@@ -264,31 +330,159 @@ tibble::tibble(P1 = theta_p1,
               column_labels.font.weight = "bold")
 
 
+
 ```
 
 ```{r}
 
 theta_table %>% 
   dplyr::filter(is.na(Theta) == FALSE) %>% 
-  ggplot2::ggplot(aes(x = TTM, y = Theta, colour = Position ))+
-  geom_line(linewidth = .8)+
+  ggplot2::ggplot(aes(x = Spot, y = Theta))+
+  geom_point(aes(colour = TTM),size = .8)+
   facet_grid(Position~.,
              scales = "free_y")+
   theme_bw()+
-  theme(element_rect(colour = "white"))
+  theme(element_rect(colour = "white"))+
+  scale_colour_viridis(option = "turbo")
 
 
 ```
 
+### Q1.d
+
 ```{r}
 
-#Expanding the plot so I can evaluate greeks across different prices.
-df <- expand.grid(Position = port_table$Position, Price = price_table$price) %>% 
-  dplyr::left_join(port_table, by = join_by(Position)) %>% 
-  dplyr::mutate(Spot = Fo,
-                Rate = rf)
+port_stats <- greek_table %>%
+      ungroup() %>% 
+      dplyr::select(Spot, Delta, Delta_Dol, Gamma, Gamma_Dol, Pos_Price) %>% 
+      dplyr::group_by(Spot) %>% 
+      dplyr::summarise(Port_Value = sum(Pos_Price), 
+                       Port_Gamma = sum(Gamma),
+                       Port_Delta = sum(Delta),
+                       Port_Gamma_Dol = sum(Gamma_Dol),
+                       Port_Delta_Dol = sum(Delta_Dol))
+
+port_stats %>%
+  dplyr::select(Spot, Port_Value, Port_Gamma, Port_Gamma_Dol) %>% 
+  tidyr::pivot_longer(cols = starts_with("Port"),
+                      names_to = "Stat",
+                      values_to = "Value") %>% 
+  dplyr::group_by(Stat) %>% 
+  ggplot2::ggplot(aes(x = Spot, y = Value, colour = Stat))+
+  geom_line(linewidth = .8)+
+  facet_grid(Stat~.,
+             scales = "free_y")+
+  theme_bw()+
+  theme(element_rect(colour = "white"),
+        legend.position = "right")
 
 
+
+
+```
+
+The portfolio is short WTI - PnL falls as the WTI futures price increases.
+
+Portfolio value is negatively convex, broadly explaining the negative gamma values through our price scope Fo = (50:100).
+
+Gamma rises as options approach at-the-money (ATM) and flattens deeper in-the-money (ITM) and deeper out-the-money (OTM). The rate of change of delta peaks ATM which falls between both extremes and at the strike.
+
+At spot \~ 65, gamma is elevated between P1 strike = 70 and P2 strike = 55. The same behavior is not observed at P2 strike \~ 55 because the gamma of P1 and P3 are heavily decayed, effectively neutralizing gamma of P2 and pushing it down to \[ G~P2~ - G~P1~ - G~P3~ \]. The same is true at strike = 80. The portfolio gamma is lowest as spot approaches 100 and the positions move significantly deep OTM for P1 and ITM for P2 and P3; in all scenarios, the rate of change of delta flattens, lowering gamma.
+
+For delta hedgers, rising gamma means larger trades in the underlying to balance PnL changes in the option portfolio.
+
+### Q2
+
+```{r}
+
+vega_sum_2 <- vega_table %>% 
+  dplyr::filter((vega_table$Position == "P1" & vega_table$i_vol == p1_vol)|
+                  (vega_table$Position == "P2" & vega_table$i_vol == p2_vol)|
+                  (vega_table$Position == "P3" & vega_table$i_vol == p3_vol)) %>% 
+  dplyr::select(Position, Spot, Vega, Vega_Dol) %>% 
+  tidyr::pivot_wider(names_from = Position,
+                     values_from = c(Vega, Vega_Dol))
+
+theta_sum_2 <- theta_table %>%
+  dplyr::select(-Maturity) %>% 
+  dplyr::filter(theta_table$TTM == Maturity) %>% 
+  dplyr::select(Position, Spot, Theta, Theta_Dol) %>%
+  tidyr::pivot_wider(names_from = Position,
+                     values_from = c(Theta, Theta_Dol))
+
+portfolio_greeks <- greek_table %>% 
+  dplyr::select(Position, Spot, Delta, Delta_Dol, Gamma, Gamma_Dol) %>% 
+  tidyr::pivot_wider(names_from = Position,
+                     values_from = c(Delta,
+                                     Delta_Dol,
+                                     Gamma,
+                                     Gamma_Dol)) %>% 
+  dplyr::left_join(theta_sum_2, by = join_by(Spot)) %>% 
+  dplyr::left_join(vega_sum_2, by = join_by(Spot)) %>% 
+  dplyr::mutate(Port_Delta = Delta_P1 + Delta_P2 + Delta_P3,
+                Port_Gamma = Gamma_P1 + Gamma_P2 + Gamma_P3,
+                Port_Vega = Vega_P1 + Vega_P2 + Vega_P3,
+                Port_Theta = Theta_P1 + Theta_P2 + Theta_P3)
+
+
+portfolio_greeks %>% 
+  dplyr::select(Spot, starts_with("Port")) %>% 
+  gt::gt() %>% 
+  tab_header(title = "Portfolio Greeks") %>% 
+  tab_options(container.height = 400,
+              column_labels.background.color = "lightgrey",
+              heading.background.color = "navy",
+              column_labels.font.weight = "bold")
+  
+
+
+
+
+```
+
+The portfolio delta flips at a WTI futures price of \~75-76.
+
+### Q3
+
+```{r}
+#attributed
+new_spot <- 90
+
+spot_ch <- new_spot - Fo
+iv_jump <- 0.2
+time_jump <- 1/365
+
+Attributed_PnL <- portfolio_greeks %>% 
+  dplyr::mutate(Delta_Att = (Delta_Dol_P1 + Delta_Dol_P2 + Delta_Dol_P3)*spot_ch,
+                Gamma_Att = (Gamma_Dol_P1 + Gamma_Dol_P2 + Gamma_Dol_P3)*spot_ch,
+                Vega_Att = (Vega_Dol_P1 + Vega_Dol_P2 + Vega_Dol_P3)*iv_jump,
+                Theta_Att = (Theta_Dol_P2 + Theta_Dol_P2 + Theta_Dol_P3)*time_jump,
+                PnL = Delta_Att + Gamma_Att + Vega_Att + Theta_Att) %>% 
+  dplyr::filter(Spot == Fo) %>% 
+  dplyr::pull(PnL)
+```
+
+```{r}
+#actual
+
+Acc_Table <- port_table %>% 
+  rowwise() %>% 
+  dplyr::mutate(Spot = new_spot,
+                Vol = Vol + iv_jump,
+                Maturity = Maturity - time_jump,
+                Price = RTL::GBSOption(Spot, 
+                                       Strike, 
+                                       Maturity, 
+                                       rf, 
+                                       0, 
+                                       Vol,
+                                       ifelse(Type == "Call", "call", "put"))$price,
+                Pos_Val = Price*Contracts*1000
+                )
+
+Actual_PnL <- sum(Acc_Table$Pos_Val)
+
+Actual_PnL
 
 
 
