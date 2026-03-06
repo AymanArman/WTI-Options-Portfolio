@@ -615,12 +615,34 @@ q4_table <-greek_table %>%
  
 q4_table %>% 
   ggplot2::ggplot(aes(x = Spot))+
-  geom_line(aes(y = Act_Val),
-            linewidth = .8,
-            color = "blue")+
-  geom_line(aes(y = Att_Val),
-            linewidth = .8,
-            color = "red") 
+  geom_line(aes(y = Act_Val, color = "Actual Port Value"),
+            linewidth = .8
+            )+
+  geom_line(aes(y = Att_Val, color = "Attributed Port Value"),
+            linewidth = .8
+            )+
+  geom_line(aes(y = Residual, color = "Residuals"),
+            linewidth = .7
+            )+
+  geom_vline(xintercept = Fo+spot_ch,
+             linewidth = .7,
+             color = "black",
+             linetype = "dashed")+
+  theme_bw()+
+  theme(element_rect(color = "white"),
+        panel.grid.minor = element_blank(),
+        legend.position = "bottom",
+        legend.title = element_blank())+
+  labs(y = "Value - US Dollars ($)",
+       x = "WTI Spot Price")
+  
 
 
 ```
+
+
+
+
+
+
+
