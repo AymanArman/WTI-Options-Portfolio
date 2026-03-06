@@ -20,6 +20,7 @@ library(gt)
 library(RTL)
 library(data.table)
 library(viridis)
+library(janitor)
 ```
 
 ```{r}
@@ -68,11 +69,11 @@ greek_table <- expand.grid(Position = port_table$Position,
                            ifelse(Type == "Call", "call", "put"))$price,
     Pos_Price = Price*Contracts*1000) %>% 
   dplyr::group_by(Position) %>% 
-  dplyr::mutate(Delta = (lead(Price)-lag(Price))/2*spot_step,
+  dplyr::mutate(Delta = (lead(Price)-lag(Price))/(2*spot_step),
                 Delta_Dol = Delta*Contracts*1000,
                 Gamma = (lead(Price) - 2*Price + lag(Price))/spot_step^2,
                 Gamma_Dol = Gamma*Contracts*1000) %>% 
-  dplyr::filter(Spot %in% seq(from = 50, to = 100, by = 1))
+  dplyr::filter(Spot %in% seq(from = 50, to = 100, by = spot_step))
 
 
 ```
@@ -178,7 +179,7 @@ vega_table <- expand.grid(Position = port_table$Position,
                            i_vol, 
                            ifelse(Type == "Call", "call", "put"))$price) %>% 
   dplyr::group_by(Position) %>% 
-  dplyr::mutate(Vega = ((lead(Price)-lag(Price))/2*spot_step)/100,
+  dplyr::mutate(Vega = ((lead(Price)-lag(Price))/(2*spot_step)/100),
                  Vega_Dol = Vega*Contracts) %>%
   drop_na() %>% 
   ungroup()
@@ -251,7 +252,7 @@ vega_summary %>%
 vega_table %>%
   dplyr::filter(Spot %in% c(51:99)) %>% 
   dplyr::slice_head(n = -2) %>% 
-  dplyr::filter(is.na(Vega) == FALSE) %>% 
+  dplyr::filter(is.na(Vega_Dol) == FALSE) %>% 
   ggplot2::ggplot(aes(x = Spot, y = Vega))+
   geom_point(size = .8,
              aes(colour = i_vol))+
@@ -337,7 +338,7 @@ theta_summary %>%
 
 theta_table %>% 
   dplyr::filter(is.na(Theta) == FALSE) %>% 
-  ggplot2::ggplot(aes(x = Spot, y = Theta))+
+  ggplot2::ggplot(aes(x = Spot, y = Theta_Dol))+
   geom_point(aes(colour = TTM),size = .8)+
   facet_grid(Position~.,
              scales = "free_y")+
@@ -394,6 +395,7 @@ For delta hedgers, rising gamma means larger trades in the underlying to balance
 ### Q2
 
 ```{r}
+
 
 vega_sum_2 <- vega_table %>% 
   dplyr::filter((vega_table$Position == "P1" & vega_table$i_vol == p1_vol)|
@@ -452,13 +454,62 @@ spot_ch <- new_spot - Fo
 iv_jump <- 0.2
 time_jump <- 1/365
 
-Attributed_PnL <- portfolio_greeks %>% 
-  dplyr::mutate(Delta_Att = (Delta_Dol_P1 + Delta_Dol_P2 + Delta_Dol_P3)*spot_ch,
-                Gamma_Att = (Gamma_Dol_P1 + Gamma_Dol_P2 + Gamma_Dol_P3)*spot_ch^2,
+
+vanna_sum <- greek_table %>% 
+  rowwise() %>% 
+  dplyr::mutate(Vanna = (RTL::GBSOption(Spot+spot_ch,
+                                        Strike,
+                                        Maturity,
+                                        rf,
+                                        0 ,
+                                        Vol+iv_jump,
+                                        ifelse(Type == "Call","call","put"))$price-
+                           RTL::GBSOption(Spot+spot_ch,
+                                        Strike,
+                                        Maturity,
+                                        rf,
+                                        0 ,
+                                        Vol-iv_jump,
+                                        ifelse(Type == "Call","call","put"))$price-
+                            RTL::GBSOption(Spot-spot_ch,
+                                        Strike,
+                                        Maturity,
+                                        rf,
+                                        0 ,
+                                        Vol+iv_jump,
+                                        ifelse(Type == "Call","call","put"))$price+
+                           RTL::GBSOption(Spot-spot_ch,
+                                        Strike,
+                                        Maturity,
+                                        rf,
+                                        0 ,
+                                        Vol-iv_jump,
+                                        ifelse(Type == "Call","call","put"))$price
+                         
+                         
+                         )/(4*spot_ch*iv_jump),
+                Vanna_Dol = Vanna*Contracts*1000
+                ) %>% 
+  dplyr::select(Spot, Position, Vanna, Vanna_Dol) %>% 
+  tidyr::pivot_wider(names_from = Position, values_from = c(Vanna, Vanna_Dol))
+
+```
+
+```{r}
+
+Attributed_PnL_Table <- portfolio_greeks %>%
+  dplyr::left_join(vanna_sum, by = join_by(Spot)) %>% 
+  dplyr::mutate(
+                Delta_Att = (Delta_Dol_P1 + Delta_Dol_P2 + Delta_Dol_P3)*spot_ch,
+                Gamma_Att = 0.5*(Gamma_Dol_P1 + Gamma_Dol_P2 + Gamma_Dol_P3)*spot_ch^2,
                 Vega_Att = (Vega_Dol_P1 + Vega_Dol_P2 + Vega_Dol_P3)*iv_jump,
                 Theta_Att = (Theta_Dol_P2 + Theta_Dol_P2 + Theta_Dol_P3)*time_jump,
-                PnL = Delta_Att + Gamma_Att + Vega_Att + Theta_Att) %>% 
-  dplyr::filter(Spot == Fo) %>% 
+                Vanna_Att = (Vanna_Dol_P1 + Vanna_Dol_P2 + Vanna_Dol_P3)*(spot_ch*iv_jump),
+                PnL = Delta_Att + Gamma_Att + Vega_Att + Theta_Att +Vanna_Att
+                ) %>% 
+    dplyr::filter(Spot == Fo)
+
+Attributed_PnL <- Attributed_PnL_Table %>% 
   dplyr::pull(PnL)
 ```
 
@@ -482,8 +533,94 @@ Acc_Table <- port_table %>%
 
 Actual_PnL <- sum(Acc_Table$Pos_Val)
 
-Actual_PnL
 
+```
+
+```{r}
+
+
+Att_PnL_Table2 <- Attributed_PnL_Table %>% 
+  rename_with(., ~str_replace_all(., '_P', '__P')) %>%
+  dplyr::select(Spot, contains("__P")) %>% 
+  tidyr::pivot_longer(-Spot,
+                      names_to = c(".value", "Position"),
+                      names_sep = "__") %>% 
+  dplyr::select(Spot, Position,  ends_with("_Dol")) %>% 
+  dplyr::mutate(Delta_Att = Delta_Dol * spot_ch,
+                Gamma_Att = 0.5*Gamma_Dol * spot_ch^2,
+                Vega_Att = Vega_Dol * iv_jump,
+                Theta_Att = Theta_Dol * time_jump,
+                Vanna_Att = Vanna_Dol * (spot_ch*iv_jump),
+                PnL = Delta_Att+Gamma_Att+Vega_Att+Theta_Att+Vanna_Att)
+  
+
+Acc_Table %>% 
+  dplyr::select(Position, Actual_PnL = Pos_Val) %>% 
+  dplyr::left_join(Att_PnL_Table2, by = join_by(Position)) %>% 
+  dplyr::mutate(
+    Unexplained_PnL = Actual_PnL - Delta_Att - Gamma_Att - Vega_Att - Theta_Att - Vanna_Att,
+    DeltaShare =Delta_Att/Actual_PnL,
+    Gamma_Share = Gamma_Att/Actual_PnL,
+    Vega_Share = Vega_Att/Actual_PnL,
+    Theta_Share = Theta_Att/Actual_PnL,
+    Vanna_Share = Vanna_Att/Actual_PnL,
+    Unexplained_Share = Unexplained_PnL/Actual_PnL) %>%
+  janitor::adorn_totals("row") %>% 
+  gt::gt() %>% 
+  gt::fmt_percent(columns = ends_with("Share")) %>% 
+  tab_header(title = "Portfolio Attributation") %>% 
+  tab_options(container.height = 400,
+              column_labels.background.color = "lightgrey",
+              heading.background.color = "navy",
+              column_labels.font.weight = "bold") %>% 
+  gt::fmt_currency(columns = c(ends_with("Dol"), Spot, ends_with("Att"), ends_with("PnL"))) %>% 
+  gt::cols_width(everything() ~ px(200))
+                
+
+
+
+
+```
+
+Delta is the largest contributor to the portfolio's losses.
+
+### Q4
+
+```{r}
+
+plus_minus <- 20
+
+q4_table <-greek_table %>% 
+  dplyr::mutate(Delta = ifelse(Position == "P1", delta_p1, 
+                               ifelse(Position == "P2", delta_p2, delta_p3)),
+                Gamma = ifelse(Position == "P1", gamma_p1, 
+                               ifelse(Position == "P2", gamma_p2, gamma_p3)),
+                Delta_Dol = Delta*Contracts*1000,
+                Gamma_Dol = Gamma*Contracts*1000) %>% 
+  dplyr::filter(Spot %in% seq(from = Fo - plus_minus, to = Fo + plus_minus, by = 1)) %>% 
+  dplyr::mutate(Spot_Diff = Spot - Fo,
+                Act_Val = Price*Contracts*1000,
+                Delta_Att = Delta_Dol*Spot_Diff,
+                Gamma_Att = 0.5*Gamma_Dol*Spot_Diff^2,
+                Att_Val = Delta_Att + Gamma_Att,
+                Residual = Act_Val - Att_Val,
+                Abs_Res = Residual / Act_Val) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::select(Spot, Act_Val, Att_Val, Residual, Abs_Res) %>% 
+  dplyr::group_by(Spot) %>% 
+  dplyr::summarise(Act_Val = sum(Act_Val),
+                   Att_Val = sum(Att_Val),
+                   Residual = Act_Val - Att_Val,
+                   Abs_Res = abs(Residual)/abs(Act_Val))
+ 
+q4_table %>% 
+  ggplot2::ggplot(aes(x = Spot))+
+  geom_line(aes(y = Act_Val),
+            linewidth = .8,
+            color = "blue")+
+  geom_line(aes(y = Att_Val),
+            linewidth = .8,
+            color = "red") 
 
 
 ```
