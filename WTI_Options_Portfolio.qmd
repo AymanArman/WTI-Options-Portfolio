@@ -4,6 +4,7 @@ format:
   html:
     embed-resources: true
 editor: visual
+author: "Ayman Arman"
 ---
 
 # **WTI Options Portfolio: Full Greek P&L Attribution**
@@ -516,7 +517,25 @@ Attributed_PnL <- Attributed_PnL_Table %>%
 ```{r}
 #actual
 
-Acc_Table <- port_table %>% 
+Init_Table <- port_table %>%
+  rowwise() %>% 
+  dplyr::mutate(Spot = Fo,
+                Price = RTL::GBSOption(Spot, 
+                                       Strike, 
+                                       Maturity, 
+                                       rf, 
+                                       0, 
+                                       Vol,
+                                       ifelse(Type == "Call", "call", "put"))$price,
+                Pos_Val = Price*Contracts*1000)
+
+
+Init_Val <- Init_Table %>% 
+  dplyr::ungroup() %>% 
+  dplyr::summarise(Pos_Val = sum(Pos_Val)) %>% 
+  dplyr::pull(Pos_Val)
+
+Acc_Table <- Init_Table %>% 
   rowwise() %>% 
   dplyr::mutate(Spot = new_spot,
                 Vol = Vol + iv_jump,
@@ -528,10 +547,15 @@ Acc_Table <- port_table %>%
                                        0, 
                                        Vol,
                                        ifelse(Type == "Call", "call", "put"))$price,
-                Pos_Val = Price*Contracts*1000
-                )
+                Pos_Val_New = Price*Contracts*1000,
+                PnL = Pos_Val + Pos_Val_New
+                ) 
 
-Actual_PnL <- sum(Acc_Table$Pos_Val)
+Actual_PnL <- Acc_Table %>% 
+  dplyr::ungroup() %>% 
+  dplyr::summarise(Pos_Val = sum(Pos_Val), PnL = Pos_Val + Init_Val) %>% 
+  pull(PnL)
+  
 
 
 ```
@@ -555,7 +579,7 @@ Att_PnL_Table2 <- Attributed_PnL_Table %>%
   
 
 Acc_Table %>% 
-  dplyr::select(Position, Actual_PnL = Pos_Val) %>% 
+  dplyr::select(Position, Actual_PnL = PnL) %>% 
   dplyr::left_join(Att_PnL_Table2, by = join_by(Position)) %>% 
   dplyr::mutate(
     Unexplained_PnL = Actual_PnL - Delta_Att - Gamma_Att - Vega_Att - Theta_Att - Vanna_Att,
@@ -582,13 +606,18 @@ Acc_Table %>%
 
 ```
 
-Delta is the largest contributor to the portfolio's losses.
+Delta is the largest contributor to the portfolio's losses. Given the large price swing, the attribution from Delta, Gamma, Vega, Theta, and Vanna is insufficient.
 
-### Q4
+The greeks evaluated using the central difference method are a snapshot of the option's moments at a specific price. Gamma accounts for the rate of change of delta (albeit in a small range), but we are not properly accounting for the rate of change of gamma, which may also only be applicable in a small range.
+
+### Q4.a
 
 ```{r}
 
 plus_minus <- 20
+
+
+
 
 q4_table <-greek_table %>% 
   dplyr::mutate(Delta = ifelse(Position == "P1", delta_p1, 
@@ -599,9 +628,9 @@ q4_table <-greek_table %>%
                 Gamma_Dol = Gamma*Contracts*1000) %>% 
   dplyr::filter(Spot %in% seq(from = Fo - plus_minus, to = Fo + plus_minus, by = 1)) %>% 
   dplyr::mutate(Spot_Diff = Spot - Fo,
-                Act_Val = Price*Contracts*1000,
+                Act_Val = (Price*Contracts*1000),
                 Delta_Att = Delta_Dol*Spot_Diff,
-                Gamma_Att = 0.5*Gamma_Dol*Spot_Diff^2,
+                Gamma_Att = (0.5*Gamma_Dol)*Spot_Diff^2,
                 Att_Val = Delta_Att + Gamma_Att,
                 Residual = Act_Val - Att_Val,
                 Abs_Res = Residual / Act_Val) %>% 
@@ -610,12 +639,14 @@ q4_table <-greek_table %>%
   dplyr::group_by(Spot) %>% 
   dplyr::summarise(Act_Val = sum(Act_Val),
                    Att_Val = sum(Att_Val),
-                   Residual = Act_Val - Att_Val,
-                   Abs_Res = abs(Residual)/abs(Act_Val))
+                   Start_Val = Init_Val,
+                   PnL = Act_Val - Init_Val,
+                   Residual = PnL - Att_Val,
+                   Abs_Res = abs(Residual)/abs(PnL))
  
 q4_table %>% 
   ggplot2::ggplot(aes(x = Spot))+
-  geom_line(aes(y = Act_Val, color = "Actual Port Value"),
+  geom_line(aes(y = PnL, color = "Actual Port Value"),
             linewidth = .8
             )+
   geom_line(aes(y = Att_Val, color = "Attributed Port Value"),
@@ -640,9 +671,40 @@ q4_table %>%
 
 ```
 
+### Q4.b
 
+```{r}
 
+q4_table %>% 
+  dplyr::select(Spot, Abs_Res) %>% 
+  gt::gt() %>% 
+  fmt_percent(Abs_Res) %>% 
+  tab_header(title = "Residuals") %>% 
+  cols_align(align = "center") %>% 
+  tab_options(column_labels.background.color = "lightgrey",
+              heading.background.color = "navy",
+              column_labels.font.weight = "bold",
+              container.height = 400)
+  
 
+```
 
+The absolute residual exceeds 5% of actual PnL at Spot = 60 and Spot = 90.
 
+The value of greeks decay as the underlying variables move further from the snapshot price. Using greeks for risk management in extreme scenarios requires real-time calculations or risk large residuals.
 
+### Q5
+
+The MTM profile of the portfolio is visually similar to a short futures position, however the structure is actually more similar to a smoothed payoff of the option structure of our portfolio.
+
+In our portfolio we are long a put (x = 70), short a put (x = 55), and short a call (x = 80). Our structure has two options offsetting payoffs as the spot price declines, and a short call on the right tail unilaterally deciding the payoff structure as the price increases.
+
+Gamma is highest at spot \~65-70. In this region, we observe moderate moneyness for positions P2 and P3, allowing for P2's strike price to dominate gamma. For the same reasons noted in 1.d, Gamma is minimized as the price increases indefinitely beyond strike = 80 - as all options are either deep ITM or OTM.
+
+From a broad perspective, gamma is elevated along the range 50:100, this makes sense due to all our positions holding strikes in that range. For prices between \$50-\$85, traders would need to delta hedge at high frequencies and in varying degrees.
+
+In the Iran war scenario, delta attributed the largest share of losses. This was predictable because the portfolio structure is short WTI. Worth noting is the deviation of Gamma and Delta for P1. Delta of a long put is negative, while our snapshot of gamma remains positive and large due to our initial proximity to P1 strike.
+
+Vanna was helpful in attributing the PnL due to the intensity of and scale of the price change. While delta attribution captures the scale, Vanna, found with central difference, provides a picture of delta's behavior across volatility, and accounts for it given the change in implied vol in the scenario.
+
+As the spot price moves absolutely further from the price at which greeks are calculated. The significance of our relational greeks (as option price relates to spot and vol) fall due to changing convexity, and the convexity of convexity changing. The slopes of our relationships decay, and hold less value further from our approximation at F~o~.
